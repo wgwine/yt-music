@@ -1,0 +1,12 @@
+# YouTube to MP3 Converter Dependencies
+
+# yt-dlp: Modern YouTube downloader (fork of youtube-dl with more features)
+yt-dlp>=2023.12.30
+
+# Optional: requests for better HTTP handling (yt-dlp dependency)
+requests>=2.31.0
+
+# Note: ffmpeg must be installed separately on your system
+# - On Ubuntu/Debian: sudo apt install ffmpeg
+# - On macOS with Homebrew: brew install ffmpeg
+# - On Windows: Download from https://ffmpeg.org/download.html

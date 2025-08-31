@@ -1,0 +1,22 @@
+[
+  {
+    "title": "Example Video 2",
+    "viewCount": "1.2M views",
+    "publishedDate": "2 years ago",
+    "author": "Example Channel",
+    "length": "4:15",
+    "videoId": "example123",
+    "videoUrl": "https://www.youtube.com/watch?v=example123",
+    "thumbnailUrl": "https://example.com/thumbnail.jpg"
+  },
+  {
+    "title": "Another Example",
+    "viewCount": "500K views", 
+    "publishedDate": "6 months ago",
+    "author": "Test Channel",
+    "length": "3:45",
+    "videoId": "test456",
+    "videoUrl": "https://www.youtube.com/watch?v=test456",
+    "thumbnailUrl": "https://example.com/thumbnail2.jpg"
+  }
+]
