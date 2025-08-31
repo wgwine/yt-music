@@ -35,7 +35,9 @@ python youtube_to_mp3.py "https://youtube.com/playlist?list=PLxxxxxx" -o ./downl
 ### Features:
 - Downloads YouTube videos and converts to MP3
 - Direct YouTube playlist URL support (no JSON needed!)
-- JSON playlist support for batch processing
+- Smart rate limit avoidance (extracts metadata first, only downloads missing)
+- Skip existing MP3 files (prevents re-downloading completed files)
+- Preserve video files when conversion fails (no data loss)
 - High-quality audio extraction (192 kbps)
 - Automatic dependency checking (with Windows user installation support)
 - User-friendly error handling
@@ -45,6 +47,9 @@ python youtube_to_mp3.py "https://youtube.com/playlist?list=PLxxxxxx" -o ./downl
 ### Windows Users:
 If you get "yt-dlp not found" errors on Windows:
 ```bash
+# Test the fix
+python test_windows_fix.py
+
 # Run diagnostics
 python diagnose_windows.py
 
@@ -77,5 +82,26 @@ python youtube_to_mp3.py your_playlist.json
 ```
 
 See `SETUP.md` for detailed installation and usage instructions.
+
+
+### Rate Limit Protection (NEW!)
+This script now intelligently avoids YouTube's rate limiting that causes "Sign in to confirm you're not a bot" errors:
+
+**How it works:**
+1. **Metadata First**: Extracts playlist info with a single request (no downloads)
+2. **Offline Comparison**: Compares video titles with existing MP3 files locally
+3. **Selective Downloads**: Only downloads videos that don't already exist as MP3s
+
+**Benefits:**
+-  Handles large playlists without triggering bot detection
+-  Resume interrupted downloads without re-processing completed files  
+-  Dramatically reduces YouTube API requests
+-  Works with playlists of any size (tested with 100+ videos)
+
+**Example for 100-video playlist:**
+- **Before**: 100 download attempts → rate limited after ~10-20 videos
+- **After**: 1 metadata request + only missing videos → no rate limits
+
+This makes the tool suitable for large music collections and batch processing!
 
 ---

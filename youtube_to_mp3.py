@@ -90,7 +90,7 @@ def check_dependencies():
     return True
 
 
-def download_and_convert(youtube_url, output_dir='./output', title_override=None):
+def download_and_convert(youtube_url, output_dir='.', title_override=None):
     """
     Download YouTube video and convert to MP3.
     
@@ -106,95 +106,133 @@ def download_and_convert(youtube_url, output_dir='./output', title_override=None
         # Create output directory if it doesn't exist
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
-        # Use title override if provided, otherwise use video title
+        # Check if MP3 already exists (skip if it does)
         if title_override:
             # Clean filename for filesystem compatibility
             safe_title = "".join(c for c in title_override if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
             safe_title = safe_title[:100]  # Limit length
+            expected_mp3_path = Path(output_dir) / f'{safe_title}.mp3'
+            
+            if expected_mp3_path.exists():
+                print(f"⏭️  Skipping (MP3 already exists): {expected_mp3_path.name}")
+                return str(expected_mp3_path)
+            
             output_template = os.path.join(output_dir, f'{safe_title}.%(ext)s')
         else:
+            # For non-override titles, we need to get the video title first to check if MP3 exists
+            try:
+                temp_result = subprocess.run(
+                    ['yt-dlp', '--get-title', youtube_url], 
+                    capture_output=True, text=True, check=True
+                )
+                video_title = temp_result.stdout.strip()
+                safe_title = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+                safe_title = safe_title[:100]  # Limit length
+                expected_mp3_path = Path(output_dir) / f'{safe_title}.mp3'
+                
+                if expected_mp3_path.exists():
+                    print(f"⏭️  Skipping (MP3 already exists): {expected_mp3_path.name}")
+                    return str(expected_mp3_path)
+            except:
+                # If we can't get the title, continue with normal download
+                pass
+            
             output_template = os.path.join(output_dir, '%(title)s.%(ext)s')
         
-        # Try different ways to call yt-dlp
-        commands_to_try = [
-            ['yt-dlp', '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '192K', '--output', output_template, '--no-playlist', youtube_url],
-            ['python', '-m', 'yt_dlp', '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '192K', '--output', output_template, '--no-playlist', youtube_url]
+        # Step 1: Download video first (without conversion)
+        video_download_template = output_template.replace('.%(ext)s', '.%(ext)s')
+        
+        download_commands_to_try = [
+            ['yt-dlp', '--format', 'bestaudio/best', '--output', video_download_template, '--no-playlist', youtube_url],
+            ['python', '-m', 'yt_dlp', '--format', 'bestaudio/best', '--output', video_download_template, '--no-playlist', youtube_url]
         ]
         
-        print(f"Downloading and converting: {youtube_url}")
+        print(f"Downloading video: {youtube_url}")
         if title_override:
             print(f"Title: {title_override}")
         print("This may take a while depending on the video length...")
         
-        result = None
-        last_error = None
+        # Download the video
+        download_result = None
+        last_download_error = None
         
-        for cmd in commands_to_try:
+        for cmd in download_commands_to_try:
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                download_result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                 break  # Success, exit loop
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                last_error = e
+                last_download_error = e
                 continue  # Try next command
         
-        if result is None:
-            raise last_error
+        if download_result is None:
+            raise last_download_error
         
-        # Improved file detection - try multiple methods
-        output_lines = result.stdout.split('\n')
-        mp3_file = None
+        # Find the downloaded video file
+        print("Locating downloaded file...")
+        video_file = None
         
-        # Method 1: Look for ExtractAudio Destination line
-        for line in output_lines:
-            if '[ExtractAudio]' in line and 'Destination:' in line:
-                mp3_file = line.split('Destination:')[1].strip()
-                break
+        # Look for common video/audio formats in output directory
+        video_extensions = ['*.mp4', '*.webm', '*.m4a', '*.mp3', '*.opus', '*.aac', '*.flv', '*.mkv']
+        downloaded_files = []
         
-        # Method 2: Look for other output indicators
-        if not mp3_file:
-            for line in output_lines:
-                if 'Deleting original file' in line:
-                    # Extract filename from deletion message
-                    parts = line.split()
-                    for part in parts:
-                        if part.endswith('.mp3'):
-                            mp3_file = part
-                            break
-                    if mp3_file:
-                        break
+        for ext in video_extensions:
+            downloaded_files.extend(list(Path(output_dir).glob(ext)))
         
-        # Method 3: Look for files matching our output pattern
-        if not mp3_file:
-            # Try to find MP3 files in the output directory that were created recently
-            mp3_files = list(Path(output_dir).glob('*.mp3'))
-            if mp3_files:
-                # Get the most recently created MP3 file
-                mp3_file = str(max(mp3_files, key=os.path.getctime))
-        
-        # Method 4: Parse yt-dlp's verbose output for filename
-        if not mp3_file:
-            for line in output_lines:
-                if line.strip().endswith('.mp3') and ('/' in line or '\\' in line):
-                    # This might be a full path to the output file
-                    potential_file = line.strip()
-                    if os.path.exists(potential_file):
-                        mp3_file = potential_file
-                        break
-        
-        if mp3_file and os.path.exists(mp3_file):
-            print(f"Successfully converted to MP3: {mp3_file}")
-            return mp3_file
+        if downloaded_files:
+            # Get the most recently created file (should be our download)
+            video_file = max(downloaded_files, key=os.path.getctime)
+            print(f"Found downloaded file: {video_file.name}")
         else:
-            # Final fallback - look for any MP3 files in output directory
-            mp3_files = list(Path(output_dir).glob('*.mp3'))
-            if mp3_files:
-                recent_file = str(max(mp3_files, key=os.path.getctime))
-                print(f"Found MP3 file: {recent_file}")
-                return recent_file
-            else:
-                print("Warning: Conversion may have completed but couldn't locate output file")
-                print("Please check the output directory manually.")
-                return None
+            print("Error: Could not locate downloaded video file")
+            return None
+        
+        # Step 2: Check if the downloaded file is already MP3
+        if video_file.suffix.lower() == '.mp3':
+            print(f"✓ File is already in MP3 format: {video_file}")
+            return str(video_file)
+        
+        # Step 3: Convert to MP3 using ffmpeg
+        print("Converting to MP3 format...")
+        
+        # Determine the output MP3 filename
+        if title_override:
+            safe_title = "".join(c for c in title_override if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+            safe_title = safe_title[:100]  # Limit length
+            mp3_file = Path(output_dir) / f'{safe_title}.mp3'
+        else:
+            mp3_file = video_file.with_suffix('.mp3')
+        
+        # Use ffmpeg to convert
+        try:
+            ffmpeg_result = subprocess.run([
+                'ffmpeg', '-i', str(video_file), 
+                '-codec:a', 'libmp3lame', 
+                '-b:a', '192k',
+                '-y',  # Overwrite output file
+                str(mp3_file)
+            ], capture_output=True, text=True, check=True)
+            
+            # Conversion successful - remove original video file
+            try:
+                video_file.unlink()
+                print(f"✓ Successfully converted and cleaned up: {mp3_file.name}")
+            except Exception as cleanup_error:
+                print(f"✓ Successfully converted: {mp3_file.name}")
+                print(f"Warning: Could not remove original video file: {cleanup_error}")
+            
+            return str(mp3_file)
+            
+        except subprocess.CalledProcessError as ffmpeg_error:
+            # Conversion failed - keep the original video file
+            print(f"✗ FFmpeg conversion failed: {ffmpeg_error.stderr}")
+            print(f"📁 Original video file preserved: {video_file.name}")
+            print("You can try converting it manually or use a different tool.")
+            return None
+        
+        except FileNotFoundError:
+            print("✗ FFmpeg not found. Please install FFmpeg to convert video files.")
+            print(f"📁 Original video file preserved: {video_file.name}")
+            return None
             
     except subprocess.CalledProcessError as e:
         print(f"Error during download/conversion: {e}")
@@ -339,7 +377,7 @@ def is_youtube_playlist_url(url):
 
 def extract_playlist_info(playlist_url):
     """
-    Extract playlist information using yt-dlp.
+    Extract playlist information using yt-dlp without downloading.
     
     Args:
         playlist_url (str): YouTube playlist URL
@@ -348,13 +386,15 @@ def extract_playlist_info(playlist_url):
         list: List of video dictionaries with title and URL, or None if failed
     """
     try:
-        print(f"Extracting playlist information from: {playlist_url}")
-        print("This may take a moment...")
+        print(f"🔍 Extracting playlist metadata from: {playlist_url}")
+        print("📋 Getting video list without downloading (avoids rate limits)...")
         
         # Try different ways to call yt-dlp for playlist extraction
+        # Use a unique separator that won't appear in video titles
+        separator = "|||SEPARATOR|||"
         commands_to_try = [
-            ['yt-dlp', '--flat-playlist', '--print', '%(title)s|%(webpage_url)s|%(id)s', playlist_url],
-            ['python', '-m', 'yt_dlp', '--flat-playlist', '--print', '%(title)s|%(webpage_url)s|%(id)s', playlist_url]
+            ['yt-dlp', '--flat-playlist', '--print', f'%(title)s{separator}%(webpage_url)s{separator}%(id)s', '--no-download', playlist_url],
+            ['python', '-m', 'yt_dlp', '--flat-playlist', '--print', f'%(title)s{separator}%(webpage_url)s{separator}%(id)s', '--no-download', playlist_url]
         ]
         
         result = None
@@ -371,44 +411,140 @@ def extract_playlist_info(playlist_url):
         if result is None:
             raise last_error
         
-        # Parse the output
+        # Parse the output using our unique separator
         playlist_data = []
         lines = result.stdout.strip().split('\n')
         
         for i, line in enumerate(lines, 1):
-            if '|' in line:
-                parts = line.split('|', 2)
+            if separator in line:
+                parts = line.split(separator)
                 if len(parts) >= 3:
-                    title, url, video_id = parts
+                    title = parts[0].strip()
+                    url = parts[1].strip()
+                    video_id = parts[2].strip()
+                    
+                    # Validate that we got a proper YouTube URL
+                    if not url.startswith('https://www.youtube.com/watch?v='):
+                        print(f"Warning: Unexpected URL format in line {i}: {url}")
+                        continue
+                    
                     video_info = {
-                        'title': title.strip(),
-                        'videoUrl': url.strip(),
-                        'videoId': video_id.strip(),
+                        'title': title,
+                        'videoUrl': url,
+                        'videoId': video_id,
                         'author': 'Unknown',
                         'length': 'Unknown',
                         'viewCount': 'Unknown',
                         'publishedDate': 'Unknown',
-                        'thumbnailUrl': f'https://i.ytimg.com/vi/{video_id.strip()}/hqdefault.jpg'
+                        'thumbnailUrl': f'https://i.ytimg.com/vi/{video_id}/hqdefault.jpg'
                     }
                     playlist_data.append(video_info)
                 else:
                     print(f"Warning: Could not parse line {i}: {line}")
+            elif line.strip():  # Skip empty lines
+                print(f"Warning: Line {i} doesn't contain separator: {line[:50]}...")
         
         if playlist_data:
-            print(f"✓ Found {len(playlist_data)} videos in playlist")
+            print(f"✅ Found {len(playlist_data)} videos in playlist metadata")
+            
+            # Show first few entries for verification
+            print("📋 Sample entries:")
+            for i, video in enumerate(playlist_data[:3], 1):
+                title_preview = video['title'][:50] + "..." if len(video['title']) > 50 else video['title']
+                print(f"   {i}. {title_preview}")
+                print(f"      URL: {video['videoUrl']}")
+            
+            if len(playlist_data) > 3:
+                print(f"   ... and {len(playlist_data) - 3} more videos")
+            
             return playlist_data
         else:
             print("❌ No videos found in playlist")
+            print("This could be due to:")
+            print("  • Private or restricted playlist") 
+            print("  • Invalid playlist URL")
+            print("  • Network connectivity issues")
             return None
             
     except subprocess.CalledProcessError as e:
         print(f"Error extracting playlist: {e}")
         if e.stderr:
             print(f"Error details: {e.stderr}")
+            if "Sign in to confirm you're not a bot" in e.stderr:
+                print("💡 This looks like a rate limiting issue.")
+                print("   Try again later or use a VPN to change your IP address.")
         return None
     except Exception as e:
         print(f"Unexpected error extracting playlist: {e}")
         return None
+
+
+def filter_missing_videos(playlist_data, output_dir='.'):
+    """
+    Filter playlist to only include videos that don't already exist as MP3s.
+    This prevents unnecessary downloads and rate limiting.
+    
+    Args:
+        playlist_data (list): List of video dictionaries from playlist
+        output_dir (str): Directory to check for existing MP3 files
+    
+    Returns:
+        tuple: (missing_videos, existing_videos) - both are lists of video info
+    """
+    if not playlist_data:
+        return [], []
+    
+    print(f"\n🔍 Checking existing files in: {output_dir}")
+    
+    output_path = Path(output_dir)
+    existing_mp3s = set()
+    
+    # Get all existing MP3 files
+    if output_path.exists():
+        for mp3_file in output_path.glob('*.mp3'):
+            existing_mp3s.add(mp3_file.stem)  # filename without extension
+    
+    print(f"📁 Found {len(existing_mp3s)} existing MP3 files")
+    
+    missing_videos = []
+    existing_videos = []
+    
+    # Check each video in the playlist
+    for video in playlist_data:
+        title = video.get('title', 'Unknown')
+        
+        # Sanitize title for filename matching
+        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+        safe_title = safe_title[:100]  # Limit length
+        
+        # Check if MP3 already exists
+        if safe_title in existing_mp3s:
+            existing_videos.append(video)
+        else:
+            missing_videos.append(video)
+    
+    print(f"\n📊 Playlist Analysis:")
+    print(f"   Total videos in playlist: {len(playlist_data)}")
+    print(f"   Already downloaded (MP3): {len(existing_videos)}")
+    print(f"   Missing (need download): {len(missing_videos)}")
+    
+    if existing_videos:
+        print(f"\n⏭️  Skipping {len(existing_videos)} existing files:")
+        for video in existing_videos[:5]:  # Show first 5
+            title = video.get('title', 'Unknown')[:50]
+            print(f"     ✓ {title}")
+        if len(existing_videos) > 5:
+            print(f"     ... and {len(existing_videos) - 5} more")
+    
+    if missing_videos:
+        print(f"\n⬇️  Will download {len(missing_videos)} missing files:")
+        for video in missing_videos[:5]:  # Show first 5
+            title = video.get('title', 'Unknown')[:50]
+            print(f"     📥 {title}")
+        if len(missing_videos) > 5:
+            print(f"     ... and {len(missing_videos) - 5} more")
+    
+    return missing_videos, existing_videos
 
 
 def is_playlist_file(input_path):
@@ -455,35 +591,65 @@ def main():
     
     # Determine input type and process accordingly
     if is_playlist_file(args.input):
-        # Process JSON playlist file
+        # Process JSON playlist file with smart filtering
         print("📁 Processing JSON playlist file...")
         playlist_data = load_playlist_from_json(args.input)
         if not playlist_data:
             sys.exit(1)
         
-        successful, failed = process_playlist(playlist_data, args.output)
-        print_playlist_summary(successful, failed)
+        # Filter out videos that already exist as MP3s
+        missing_videos, existing_videos = filter_missing_videos(playlist_data, args.output)
+        
+        if not missing_videos:
+            print(f"\n🎉 All {len(playlist_data)} videos are already downloaded!")
+            print("✅ Nothing to do - all MP3 files exist.")
+            sys.exit(0)
+        
+        # Only process missing videos
+        print(f"\n🚀 Processing {len(missing_videos)} missing videos...")
+        successful, failed = process_playlist(missing_videos, args.output)
+        
+        # Include existing videos in success count for reporting
+        total_successful = successful + [v['title'] for v in existing_videos]
+        print_playlist_summary(total_successful, failed)
         
         if failed:
-            sys.exit(1)  # Exit with error if any downloads failed
+            print(f"\n⚠️  {len(total_successful)} videos successful, {len(failed)} failed")
+            sys.exit(1)
         else:
-            print(f"\n🎉 All {len(successful)} videos converted successfully!")
+            print(f"\n🎉 All {len(total_successful)} videos are now available!")
             sys.exit(0)
     
     elif is_youtube_playlist_url(args.input):
-        # Process YouTube playlist URL
+        # Process YouTube playlist URL with smart filtering
         print("🎵 Processing YouTube playlist URL...")
+        
+        # Step 1: Extract playlist metadata (no downloads, avoids rate limits)
         playlist_data = extract_playlist_info(args.input)
         if not playlist_data:
             sys.exit(1)
         
-        successful, failed = process_playlist(playlist_data, args.output)
-        print_playlist_summary(successful, failed)
+        # Step 2: Filter out videos that already exist as MP3s
+        missing_videos, existing_videos = filter_missing_videos(playlist_data, args.output)
+        
+        if not missing_videos:
+            print(f"\n🎉 All {len(playlist_data)} videos are already downloaded!")
+            print("✅ Nothing to do - all MP3 files exist.")
+            sys.exit(0)
+        
+        # Step 3: Only process missing videos (avoids rate limiting)
+        print(f"\n🚀 Processing {len(missing_videos)} missing videos...")
+        successful, failed = process_playlist(missing_videos, args.output)
+        
+        # Step 4: Include existing videos in success count for reporting
+        total_successful = successful + [v['title'] for v in existing_videos]
+        print_playlist_summary(total_successful, failed)
         
         if failed:
-            sys.exit(1)  # Exit with error if any downloads failed
+            print(f"\n⚠️  {len(total_successful)} videos successful, {len(failed)} failed")
+            sys.exit(1)
         else:
-            print(f"\n🎉 All {len(successful)} videos converted successfully!")
+            print(f"\n🎉 All {len(total_successful)} videos are now available!")
             sys.exit(0)
     
     else:
